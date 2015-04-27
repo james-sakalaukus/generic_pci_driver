@@ -10,39 +10,20 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/init.h>
-
+#include <linux/types.h>
 
 #define my_vendor_id 0x1337
 #define my_device_id 0x1337
 #define my_pci_driver_name "james_pci_driver"
 
 // set how many BAR registers the device implements
-#define bars_implemented 1;
+#define bars_implemented 1
 
 // BAR addresses from kernel; up to 6 can be used
-unsigned long bar0_start;
-unsigned long bar0_end;
-#if bars_implemented > 1
-  unsigned long bar1_start;
-  unsigned long bar1_end;
-#if bars_implemented > 2
-  unsigned long bar2_start;
-  unsigned long bar2_end;
-#if bars_implemented > 3
-  unsigned long bar3_start;
-  unsigned long bar3_end;
-#if bars_implemented > 4
-  unsigned long bar4_start;
-  unsigned long bar4_end;
-#if bars_implemented > 5
-  unsigned long bar5_start;
-  unsigned long bar5_end;
-#endif // >5
-#endif // >4
-#endif // >3
-#endif // >2
-#endif // >1
+unsigned long bar_start[bars_implemented];
+unsigned long bar_end[bars_implemented];
 
+// pointers to BAR virtual memory map buffers
 
 static struct pci_device_id ids[] = {
     { my_vendor_id, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
@@ -51,51 +32,59 @@ static struct pci_device_id ids[] = {
 
 MODULE_DEVICE_TABLE(pci, ids);
 
+size_t dmaBufferSize;
+dma_addr_t dmaBufferPointer;
 
+/*
+ * Use the probe() function to:
+ *  claim the PCI memory
+ *  setup PCI configuration registers
+ *  enable the device
+ */
 static int probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
-  printk(KERN_DEBUG "%s:probe() called\n", my_pci_driver_name);
-
-  u8 vendorId, deviceId;
+  uint8_t vendorId;
+  uint8_t deviceId;
   int i;
 
+  printk(KERN_DEBUG "%s:probe() called\n", my_pci_driver_name);
+
+
   // actually enable the PCI card
-  pci_enable_device(dev);
+  if(!pci_enable_device(dev)) {
+    printk(KERN_ERR "%s:probe():pci_enable_device failed!\n", my_pci_driver_name);
+    return -1;
+  }
 
   // read configuration space and check if we got correct device
   pci_read_config_byte(dev, my_vendor_id, &vendorId);
   pci_read_config_byte(dev, my_device_id, &deviceId);
   if(vendorId != my_vendor_id) {
-    printk(KERN_ERROR"%s:probe() Wrong device! Expecting vendor %X and device %X;", my_pci_driver_name, my_vendor_id, my_device_id);
-    printk(KERN_ERROR"Received vendor %X and device %X;\n", vendorId, deviceId);
+    printk(KERN_ERR"%s:probe() Wrong device! Expecting vendor %X and device %X;", my_pci_driver_name, my_vendor_id, my_device_id);
+    printk(KERN_ERR"Received vendor %X and device %X;\n", vendorId, deviceId);
     return -1;
+  } else {
+    printk(KERN_DEBUG"Read Vendor ID:%X and Device ID:%X;\n", vendorId, deviceId);
   }
 
-  // set up access the device's memory
-  printk(KERN_DEBUG "%s:probe(): Requesting %d BAR locations\n", bars_implemented);
-  bar0_start = pci_resource_start(dev, 0);
-  unsigned long bar0_end;
-  #if bars_implemented > 1
-    unsigned long bar1_start;
-    unsigned long bar1_end;
-  #if bars_implemented > 2
-    unsigned long bar2_start;
-    unsigned long bar2_end;
-  #if bars_implemented > 3
-    unsigned long bar3_start;
-    unsigned long bar3_end;
-  #if bars_implemented > 4
-    unsigned long bar4_start;
-    unsigned long bar4_end;
-  #if bars_implemented > 5
-    unsigned long bar5_start;
-    unsigned long bar5_end;
-  #endif // >1
-  #endif // >2
-  #endif // >3
-  #endif // >4
-  #endif // >5
+  // let device be a bus master for dma and such
+  pci_set_master(dev);
 
+  // set up access the device's memory
+  printk(KERN_DEBUG "%s:probe(): Requesting %d BAR locations\n", my_pci_driver_name, bars_implemented);
+  for(i=0;i<bars_implemented;i++) {
+    bar_start[i] = pci_resource_start(dev, i);
+    bar_end[i] = pci_resource_end(dev, i);
+  }
+
+  // this will reserve all memory on the PCI card
+  if(!pci_request_regions(dev, my_pci_driver_name)) {
+    printk(KERN_ERR"%s:probe(): pci_request_regions failed!\n", my_pci_driver_name);
+  }
+
+  // for dma - TODO!
+//  pci_dma_set_mask()
+//  pci_alloc_consistent(dev, dmaBufferSize, dmaBufferPointer);
 
 
   return 0;
@@ -126,6 +115,9 @@ static void __exit my_pci_driver_exit(void)
   pci_unregister_driver(&my_pci_driver);
 }
 
-MODULE_LICENSE("GPL");
+
 module_init(my_pci_driver_init);
 module_exit(my_pci_driver_exit);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Big Sak");
+
